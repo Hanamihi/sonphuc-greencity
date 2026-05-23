@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Quản lý thông tin quỹ đất - Sơn Phúc Green City</title>
+    <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/hammer.js/2.0.8/hammer.min.js"></script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <h2 style="color: #2c3e50;"> 
+        <div class="header">
+            QUẢN LÝ THÔNG TIN QUỸ ĐẤT DỰ ÁN<br>
+            <small>Sơn Phúc Green City Tuyên Quang</small>
+        </div>
+    </h2>
+
+    <div class="map-container" id="map-wrapper"></div>
+
+    <div id="info-box">
+        <h3 id="malo">Mã lô</h3>
+        <div class="info-row"><span>Tình trạng:</span> <b id="trangThai"></b></div>
+        <div class="info-row"><span>Loại:</span> <b id="loai"></b></div>
+        <div class="info-row"><span>Diện tích lô:</span> <b id="dientich"></b></div>
+        
+        <div id="construction-info">
+            <div class="info-row"><span>Chiều cao:</span> <b id="sotang"></b></div>
+            <div class="info-row"><span>Diện tích XD:</span> <b id="dtxd"></b></div>
+            <div class="info-row"><span>Mật độ XD:</span> <b id="matdo"></b></div>
+            
+            <hr>
+            <span class="floor-title">Thông tin sàn xây dựng</span>
+            <div id="floor-details">
+                <div class="info-row"><span>Tầng 1:</span> <b id="t1"></b></div>
+                <div class="info-row"><span>Tầng 2:</span> <b id="t2"></b></div>
+                <div class="info-row"><span>Tầng 3:</span> <b id="t3"></b></div>
+                <div class="info-row"><span>Tầng 4:</span> <b id="t4"></b></div>
+                <div class="info-row" style="border-top: 1px solid #eee; padding-top: 8px; margin-top: 5px;">
+                    <span>Tổng diện tích sàn:</span> <b id="tongSan" style="color: #d35400;"></b>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/main.js"></script>
+</body>
+</html>
