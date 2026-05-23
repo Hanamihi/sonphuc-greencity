@@ -1,4 +1,3 @@
-Đây là toàn bộ script của file .js tôi đã sửa nhưng chữ vẫn bị chéo, không đặt theo trục
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwHK0oo4SHviMpKj9yZ_tOnA61JwSMjh1x3Ds_yhsUxYYZEchzXAdzNwQtEqSYdwU5aig/exec"; 
 let dataBDS = {}; 
 const infoBox = document.getElementById('info-box');
