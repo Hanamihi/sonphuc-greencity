@@ -33,11 +33,8 @@ function initMap() {
             const info = dataBDS[id];
             lot.classList.add('lot-interactive');
 
-            // --- TẠO NHÃN TÊN VÀ ĐỔI MÀU ---
-            // Bổ sung tìm kiếm cả polyline và path để vét cạn mọi kiểu xuất CAD
             const shape = lot.querySelector('rect, polygon, path, polyline'); 
             if (shape) {
-                // Tô màu xám nếu Đã bán
                 if (info.TrangThai === "Đã bán" || info.TrangThai === "Đã Bán") {
                     shape.style.fill = "#7f8c8d"; 
                     shape.style.opacity = "0.8";  
@@ -46,7 +43,6 @@ function initMap() {
                 let textAngle = 0;
                 let tagName = shape.tagName.toLowerCase();
 
-                // 1. Nếu là dạng hình chữ nhật (Rect)
                 if (tagName === 'rect') {
                     let baseAngle = 0;
                     const w = parseFloat(shape.getAttribute('width') || 0);
@@ -59,7 +55,6 @@ function initMap() {
                             const match = transform.match(/rotate\(([-0-9.]+)/);
                             if (match) baseAngle += parseFloat(match[1]);
                         } else if (transform.includes('matrix')) {
-                            // Đọc góc xoay nếu file bị biến đổi qua Illustrator
                             const match = transform.match(/matrix\(([^)]+)\)/);
                             if (match) {
                                 let vals = match[1].split(/[\s,]+/).map(parseFloat);
@@ -71,11 +66,9 @@ function initMap() {
                     }
                     textAngle = baseAngle;
                 } 
-                // 2. Nếu là dạng đa giác (Polygon), đường gấp khúc (Polyline) hoặc nét vẽ (Path)
                 else {
                     let points = [];
                     
-                    // Lấy tọa độ các đỉnh
                     if (tagName === 'polygon' || tagName === 'polyline') {
                         const pointsStr = shape.getAttribute('points').trim().split(/[\s,]+/);
                         for (let i = 0; i < pointsStr.length; i += 2) {
@@ -95,52 +88,64 @@ function initMap() {
                         }
                     }
 
-                    // TÌM TRỤC CHÍNH BẰNG CÁCH CỘNG GỘP CHIỀU DÀI
+                    // TÌM TRỤC CHÍNH BẰNG CÁCH CỘNG GỘP CHIỀU DÀI (CÓ DUNG SAI GÓC)
                     if (points.length >= 3) {
-                        let angleBuckets = {}; 
-                        let maxLen = 0;
+                        let angleBuckets = []; 
                         
                         for (let i = 0; i < points.length; i++) {
                             let p1 = points[i];
-                            // Bỏ qua đoạn nối điểm cuối về điểm đầu nếu là polyline hở
                             if (tagName === 'polyline' && i === points.length - 1) break;
-                            
                             let p2 = points[(i + 1) % points.length];
                             
                             let dx = p2.x - p1.x;
                             let dy = p2.y - p1.y;
                             let length = Math.sqrt(dx*dx + dy*dy);
                             
-                            if (length < 0.1) continue; // Bỏ qua các nét vẽ nhiễu li ti
+                            // Nâng mức lọc nhiễu lên để loại bỏ các điểm node rác sinh ra từ CAD
+                            if (length < 1.0) continue; 
                             
                             let angle = Math.atan2(dy, dx) * (180 / Math.PI);
                             
-                            // Chuẩn hóa góc về khoảng 0 -> 179 độ để gộp các đường thẳng song song
-                            let normAngle = angle;
-                            while (normAngle < 0) normAngle += 180;
-                            while (normAngle >= 180) normAngle -= 180;
+                            // Chuẩn hóa góc về khoảng 0 -> 179.99 độ
+                            let normAngle = angle % 180;
+                            if (normAngle < 0) normAngle += 180;
                             
-                            // Làm tròn góc để tạo nhóm
-                            let rounded = Math.round(normAngle);
-                            if (rounded === 180) rounded = 0;
-                            
-                            if (!angleBuckets[rounded]) {
-                                angleBuckets[rounded] = { sum: 0, exactAngle: angle };
+                            let foundBucket = false;
+                            for (let bucket of angleBuckets) {
+                                let diff = Math.abs(normAngle - bucket.angle);
+                                // Cân bằng sai số giữa góc xấp xỉ 0 độ và 180 độ
+                                if (diff > 90) diff = 180 - diff; 
+                                
+                                // Áp dụng dung sai 5 độ để gom các đoạn thẳng song song bị gãy
+                                if (diff <= 5) {
+                                    bucket.sum += length;
+                                    // Giữ lại góc của đoạn thẳng liền mạch dài nhất trong nhóm làm góc chuẩn
+                                    if (length > bucket.maxLength) {
+                                        bucket.angle = normAngle;
+                                        bucket.maxLength = length;
+                                    }
+                                    foundBucket = true;
+                                    break;
+                                }
                             }
                             
-                            // Cộng dồn chiều dài vào nhóm góc tương ứng
-                            angleBuckets[rounded].sum += length;
-                            
-                            // Cập nhật góc có tổng chiều dài lớn nhất
-                            if (angleBuckets[rounded].sum > maxLen) {
-                                maxLen = angleBuckets[rounded].sum;
-                                textAngle = angleBuckets[rounded].exactAngle;
+                            if (!foundBucket) {
+                                angleBuckets.push({ angle: normAngle, sum: length, maxLength: length });
+                            }
+                        }
+
+                        // Chọn nhóm trục có tổng chiều dài các đoạn thẳng lớn nhất (chiều sâu lô)
+                        let maxLen = 0;
+                        for (let bucket of angleBuckets) {
+                            if (bucket.sum > maxLen) {
+                                maxLen = bucket.sum;
+                                textAngle = bucket.angle;
                             }
                         }
                     }
                 }
 
-                // Chỉnh lại góc để chữ không bị lộn ngược
+                // Đảo chiều chữ để luôn dễ đọc từ trái sang phải hoặc từ dưới lên trên
                 while (textAngle > 90) textAngle -= 180;
                 while (textAngle <= -90) textAngle += 180;
 
