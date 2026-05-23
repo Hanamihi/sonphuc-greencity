@@ -30,7 +30,7 @@
     .lot-label {
         font-size: 4px; 
         font-weight: bold;
-        fill: #333; 
+        fill: #e3e3e3; 
         pointer-events: none; 
         text-shadow: 0.5px 0.5px 0px rgba(255,255,255,0.8);
         user-select: none;
