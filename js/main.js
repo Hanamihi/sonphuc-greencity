@@ -24,7 +24,7 @@ Promise.all([
     alert("Không thể tải dữ liệu hoặc bản đồ. Vui lòng kiểm tra lại đường dẫn!");
 });
 
-// Hàm xử lý bản đồ và tương tác
+// Hàm xử lý bản đồ và tương tác (Phiên bản Geometry Parser chuẩn xác)
 function initMap() {
     document.querySelectorAll('svg g[id]').forEach(lot => {
         const id = lot.id;
@@ -33,17 +33,61 @@ function initMap() {
             const info = dataBDS[id];
             lot.classList.add('lot-interactive');
 
-            const shape = lot.querySelector('rect, polygon, path, polyline'); 
-            if (shape) {
-                if (info.TrangThai === "Đã bán" || info.TrangThai === "Đã Bán") {
+            // 1. QUÉT TOÀN BỘ CÁC NÉT VẼ CẤU THÀNH LÔ ĐẤT (Đề phòng CAD xuất vỡ nét)
+            const allShapes = lot.querySelectorAll('rect, polygon, path, polyline, line');
+            
+            // Đổi màu Đã Bán cho toàn bộ các nét
+            if (info.TrangThai === "Đã bán" || info.TrangThai === "Đã Bán") {
+                allShapes.forEach(shape => {
                     shape.style.fill = "#7f8c8d"; 
                     shape.style.opacity = "0.8";  
-                }
+                });
+            }
 
-                let textAngle = 0;
+            let textAngle = 0;
+            let angleBuckets = [];
+
+            // Hàm phụ: Phân tích, tính chiều dài, góc và cộng dồn (Thuật toán Tolerance 6 độ)
+            function addSegment(x1, y1, x2, y2) {
+                let dx = x2 - x1;
+                let dy = y2 - y1;
+                let length = Math.sqrt(dx*dx + dy*dy);
+                if (length < 0.5) return; // Loại bỏ nhiễu/rác vi điểm
+                
+                let angle = Math.atan2(dy, dx) * (180 / Math.PI);
+                let normAngle = angle % 180;
+                if (normAngle < 0) normAngle += 180;
+                
+                let found = false;
+                for (let bucket of angleBuckets) {
+                    let diff = Math.abs(normAngle - bucket.angle);
+                    if (diff > 90) diff = 180 - diff;
+                    
+                    if (diff <= 6) { 
+                        bucket.sum += length;
+                        // Neo theo góc của đoạn thẳng dài nhất trong nhóm
+                        if (length > bucket.maxLength) {
+                            bucket.angle = normAngle;
+                            bucket.maxLength = length;
+                        }
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    angleBuckets.push({ angle: normAngle, sum: length, maxLength: length });
+                }
+            }
+
+            let isRect = false;
+
+            // 2. GIẢI MÃ TỌA ĐỘ ĐỂ TÌM TRỤC SÂU NHẤT CỦA LÔ
+            allShapes.forEach(shape => {
                 let tagName = shape.tagName.toLowerCase();
 
-                if (tagName === 'rect') {
+                // Dành cho hình chữ nhật nguyên khối
+                if (tagName === 'rect' && angleBuckets.length === 0) {
+                    isRect = true;
                     let baseAngle = 0;
                     const w = parseFloat(shape.getAttribute('width') || 0);
                     const h = parseFloat(shape.getAttribute('height') || 0);
@@ -66,105 +110,105 @@ function initMap() {
                     }
                     textAngle = baseAngle;
                 } 
-                else {
-                    let points = [];
-                    
-                    if (tagName === 'polygon' || tagName === 'polyline') {
-                        const pointsStr = shape.getAttribute('points').trim().split(/[\s,]+/);
-                        for (let i = 0; i < pointsStr.length; i += 2) {
-                            if (pointsStr[i] !== undefined && pointsStr[i+1] !== undefined) {
-                                points.push({x: parseFloat(pointsStr[i]), y: parseFloat(pointsStr[i+1])});
-                            }
-                        }
-                    } else if (tagName === 'path') {
-                        const d = shape.getAttribute('d');
-                        const coords = d.match(/[-+]?[0-9]*\.?[0-9]+/g);
-                        if (coords) {
-                            for (let i = 0; i < coords.length; i += 2) {
-                                if (coords[i+1] !== undefined) {
-                                    points.push({x: parseFloat(coords[i]), y: parseFloat(coords[i+1])});
-                                }
-                            }
+                // Dành cho nét thẳng rời rạc
+                else if (tagName === 'line') {
+                    addSegment(parseFloat(shape.getAttribute('x1')), parseFloat(shape.getAttribute('y1')),
+                               parseFloat(shape.getAttribute('x2')), parseFloat(shape.getAttribute('y2')));
+                }
+                // Dành cho đa giác Polyline/Polygon
+                else if (tagName === 'polygon' || tagName === 'polyline') {
+                    const pointsStr = shape.getAttribute('points').trim().split(/[\s,]+/);
+                    let pts = [];
+                    for (let i = 0; i < pointsStr.length; i += 2) {
+                        if (pointsStr[i] !== undefined && pointsStr[i+1] !== undefined) {
+                            pts.push({x: parseFloat(pointsStr[i]), y: parseFloat(pointsStr[i+1])});
                         }
                     }
-
-                    // TÌM TRỤC CHÍNH BẰNG CÁCH CỘNG GỘP CHIỀU DÀI (CÓ DUNG SAI GÓC)
-                    if (points.length >= 3) {
-                        let angleBuckets = []; 
-                        
-                        for (let i = 0; i < points.length; i++) {
-                            let p1 = points[i];
-                            if (tagName === 'polyline' && i === points.length - 1) break;
-                            let p2 = points[(i + 1) % points.length];
-                            
-                            let dx = p2.x - p1.x;
-                            let dy = p2.y - p1.y;
-                            let length = Math.sqrt(dx*dx + dy*dy);
-                            
-                            // Nâng mức lọc nhiễu lên để loại bỏ các điểm node rác sinh ra từ CAD
-                            if (length < 1.0) continue; 
-                            
-                            let angle = Math.atan2(dy, dx) * (180 / Math.PI);
-                            
-                            // Chuẩn hóa góc về khoảng 0 -> 179.99 độ
-                            let normAngle = angle % 180;
-                            if (normAngle < 0) normAngle += 180;
-                            
-                            let foundBucket = false;
-                            for (let bucket of angleBuckets) {
-                                let diff = Math.abs(normAngle - bucket.angle);
-                                // Cân bằng sai số giữa góc xấp xỉ 0 độ và 180 độ
-                                if (diff > 90) diff = 180 - diff; 
-                                
-                                // Áp dụng dung sai 5 độ để gom các đoạn thẳng song song bị gãy
-                                if (diff <= 5) {
-                                    bucket.sum += length;
-                                    // Giữ lại góc của đoạn thẳng liền mạch dài nhất trong nhóm làm góc chuẩn
-                                    if (length > bucket.maxLength) {
-                                        bucket.angle = normAngle;
-                                        bucket.maxLength = length;
-                                    }
-                                    foundBucket = true;
-                                    break;
+                    for (let i = 0; i < pts.length; i++) {
+                        if (tagName === 'polyline' && i === pts.length - 1) break;
+                        addSegment(pts[i].x, pts[i].y, pts[(i + 1) % pts.length].x, pts[(i + 1) % pts.length].y);
+                    }
+                }
+                // Dành cho mảng Path phức tạp (Xử lý dứt điểm lệch chéo do Lệnh H, V, relative)
+                else if (tagName === 'path') {
+                    const d = shape.getAttribute('d');
+                    let commands = d.match(/[a-zA-Z]|[-+]?[0-9]*\.?[0-9]+/g);
+                    if (commands) {
+                        let cx = 0, cy = 0, startX = 0, startY = 0;
+                        let cmd = '';
+                        for (let i = 0; i < commands.length; i++) {
+                            let token = commands[i];
+                            if (/[a-zA-Z]/.test(token)) {
+                                cmd = token;
+                                if (cmd.toUpperCase() === 'Z') {
+                                    addSegment(cx, cy, startX, startY);
+                                    cx = startX; cy = startY;
                                 }
-                            }
-                            
-                            if (!foundBucket) {
-                                angleBuckets.push({ angle: normAngle, sum: length, maxLength: length });
-                            }
-                        }
-
-                        // Chọn nhóm trục có tổng chiều dài các đoạn thẳng lớn nhất (chiều sâu lô)
-                        let maxLen = 0;
-                        for (let bucket of angleBuckets) {
-                            if (bucket.sum > maxLen) {
-                                maxLen = bucket.sum;
-                                textAngle = bucket.angle;
+                            } else {
+                                let nx = cx, ny = cy;
+                                if (cmd === 'M' || cmd === 'L') {
+                                    nx = parseFloat(token);
+                                    ny = parseFloat(commands[++i]);
+                                    if (cmd === 'M') { startX = nx; startY = ny; }
+                                } else if (cmd === 'm' || cmd === 'l') {
+                                    nx = cx + parseFloat(token);
+                                    ny = cy + parseFloat(commands[++i]);
+                                    if (cmd === 'm') { startX = nx; startY = ny; }
+                                } else if (cmd === 'H') {
+                                    nx = parseFloat(token);
+                                } else if (cmd === 'h') {
+                                    nx = cx + parseFloat(token);
+                                } else if (cmd === 'V') {
+                                    ny = parseFloat(token);
+                                } else if (cmd === 'v') {
+                                    ny = cy + parseFloat(token);
+                                } else {
+                                    continue; // Bỏ qua đường cong Bezier
+                                }
+                                
+                                if (cmd !== 'M' && cmd !== 'm') {
+                                    addSegment(cx, cy, nx, ny);
+                                }
+                                cx = nx; cy = ny;
+                                if (cmd === 'M') cmd = 'L';
+                                if (cmd === 'm') cmd = 'l';
                             }
                         }
                     }
                 }
+            });
 
-                // Đảo chiều chữ để luôn dễ đọc từ trái sang phải hoặc từ dưới lên trên
-                while (textAngle > 90) textAngle -= 180;
-                while (textAngle <= -90) textAngle += 180;
-
-                const bbox = lot.getBBox();
-                const centerX = bbox.x + bbox.width / 2;
-                const centerY = bbox.y + bbox.height / 2;
-
-                const textLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
-                textLabel.setAttribute("x", centerX);
-                textLabel.setAttribute("y", centerY);
-                textLabel.setAttribute("text-anchor", "middle");
-                textLabel.setAttribute("dominant-baseline", "middle");
-                textLabel.setAttribute("class", "lot-label");
-                textLabel.setAttribute("transform", `rotate(${textAngle} ${centerX} ${centerY})`);
-                textLabel.textContent = id; 
-                lot.appendChild(textLabel);
+            // 3. TÌM GÓC CỦA TRỤC DÀI NHẤT
+            if (!isRect && angleBuckets.length > 0) {
+                let maxLen = 0;
+                for (let bucket of angleBuckets) {
+                    if (bucket.sum > maxLen) {
+                        maxLen = bucket.sum;
+                        textAngle = bucket.angle;
+                    }
+                }
             }
 
-            // --- SỰ KIỆN CLICK MỞ POPUP ---
+            // Đảo chiều chữ để luôn dễ đọc từ trái sang phải hoặc từ dưới lên
+            while (textAngle > 90) textAngle -= 180;
+            while (textAngle <= -90) textAngle += 180;
+
+            // 4. VẼ NHÃN VÀO TÂM LÔ ĐẤT
+            const bbox = lot.getBBox();
+            const centerX = bbox.x + bbox.width / 2;
+            const centerY = bbox.y + bbox.height / 2;
+
+            const textLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            textLabel.setAttribute("x", centerX);
+            textLabel.setAttribute("y", centerY);
+            textLabel.setAttribute("text-anchor", "middle");
+            textLabel.setAttribute("dominant-baseline", "middle");
+            textLabel.setAttribute("class", "lot-label");
+            textLabel.setAttribute("transform", `rotate(${textAngle} ${centerX} ${centerY})`);
+            textLabel.textContent = id; 
+            lot.appendChild(textLabel);
+
+            // --- SỰ KIỆN CLICK MỞ POPUP DỮ LIỆU ---
             lot.addEventListener('click', function(e) {
                 document.getElementById('malo').innerText = "Lô: " + id;
                 
