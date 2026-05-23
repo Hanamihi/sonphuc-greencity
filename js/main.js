@@ -145,10 +145,9 @@ function initMap() {
         };
     });
 
+// ==========================================
+    // BƯỚC 2: ĐỒNG THUẬN NHÓM (Cải tiến với Median Angle)
     // ==========================================
-    // BƯỚC 2: THUẬT TOÁN "ĐỒNG THUẬN NHÓM" (Sửa lỗi 90 độ)
-    // ==========================================
-    // Phân nhóm các lô theo Block (LK22A, LK09...)
     const groups = {};
     for (let id in lotMetrics) {
         let p = lotMetrics[id].prefix;
@@ -156,37 +155,39 @@ function initMap() {
         groups[p].push(lotMetrics[id]);
     }
 
-    for (let id in lotMetrics) {
-        let lot = lotMetrics[id];
-        let siblings = groups[lot.prefix];
+    for (let p in groups) {
+        let siblings = groups[p];
+        if (siblings.length < 2) continue;
 
-        // Nếu block có từ 3 lô trở lên, bắt đầu lấy biểu quyết
-        if (siblings.length >= 3) {
-            let parallelCount = 0; // Số anh em đồng thuận
-            let perpCount = 0;     // Số anh em đang vuông góc với nó
+        // 1. Lấy tất cả các góc đang có trong nhóm
+        let angles = siblings.map(s => s.angle % 180);
+        
+        // 2. Tìm góc đại diện (Mode/Median) để làm "Chuẩn" cho cả block
+        // Dùng phương pháp nhóm góc vào các "giỏ" 30 độ để tìm góc phổ biến nhất
+        let bins = {};
+        angles.forEach(a => {
+            let bin = Math.round(a / 30) * 30; // Gom nhóm các góc gần nhau
+            bins[bin] = (bins[bin] || 0) + 1;
+        });
+        
+        let targetAngle = parseInt(Object.keys(bins).reduce((a, b) => bins[a] > bins[b] ? a : b));
 
-            siblings.forEach(sib => {
-                if (sib === lot) return;
-                // Tính góc lệch chuẩn giữa 2 đường thẳng (0 đến 90 độ)
-                let diff = Math.abs(lot.angle - sib.angle) % 180;
-                if (diff > 90) diff = 180 - diff;
+        // 3. Ép các lô sai biệt về góc chuẩn
+        siblings.forEach(lot => {
+            let diff = Math.abs((lot.angle % 180) - targetAngle);
+            if (diff > 90) diff = Math.abs(diff - 180);
 
-                if (diff <= 30) parallelCount++; // Sai số cho phép do đường cong
-                else if (diff >= 60) perpCount++; // Bị xoay chéo 90 độ
-            });
-
-            // Nếu số lượng hàng xóm vuông góc với nó NHIỀU HƠN số đồng thuận
-            // -> Nó chính là kẻ dị biệt, ép nó xoay 90 độ lại!
-            if (perpCount > parallelCount) {
-                lot.angle += 90;
+            // Nếu lệch quá 30 độ so với góc chuẩn của Block -> Ép xoay về góc chuẩn
+            if (diff > 30) {
+                lot.angle = targetAngle; 
             }
-        }
-
-        // Chuẩn hóa góc để chữ không bị lộn ngược (-90 đến 90)
-        let finalAngle = lot.angle % 180;
-        if (finalAngle > 90) finalAngle -= 180;
-        if (finalAngle <= -90) finalAngle += 180;
-        lot.finalAngle = finalAngle;
+            
+            // Chuẩn hóa cuối cùng
+            let final = lot.angle % 180;
+            if (final > 90) final -= 180;
+            if (final <= -90) final += 180;
+            lot.finalAngle = final;
+        });
     }
 
     // ==========================================
