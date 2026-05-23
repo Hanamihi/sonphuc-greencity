@@ -23,31 +23,6 @@ Promise.all([
     console.error("Lỗi khởi tạo:", error);
     alert("Không thể tải dữ liệu hoặc bản đồ. Vui lòng kiểm tra lại đường dẫn!");
 });
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwHK0oo4SHviMpKj9yZ_tOnA61JwSMjh1x3Ds_yhsUxYYZEchzXAdzNwQtEqSYdwU5aig/exec"; 
-let dataBDS = {}; 
-const infoBox = document.getElementById('info-box');
-
-// Tải ĐỒNG THỜI file SVG và dữ liệu từ Google Sheets
-Promise.all([
-    fetch('assets/svg/map.svg').then(response => response.text()),
-    fetch(SCRIPT_URL).then(response => response.json())
-])
-.then(([svgContent, data]) => {
-    // 1. Nhúng đoạn mã SVG vào trang HTML
-    document.getElementById('map-wrapper').innerHTML = svgContent;
-    
-    // 2. Lưu dữ liệu Google Sheet
-    dataBDS = data; 
-    console.log("Đã tải dữ liệu và bản đồ thành công!");
-    
-    // 3. Khởi tạo chức năng (Vẽ tên lô, Click, Zoom)
-    initMap();      
-    initZoom();     
-})
-.catch(error => {
-    console.error("Lỗi khởi tạo:", error);
-    alert("Không thể tải dữ liệu hoặc bản đồ. Vui lòng kiểm tra lại đường dẫn!");
-});
 
 // Hàm xử lý bản đồ (Phiên bản: 3-Pass Algorithm + Group Consensus)
 function initMap() {
