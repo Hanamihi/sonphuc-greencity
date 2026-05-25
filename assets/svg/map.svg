@@ -1,9 +1,9 @@
 <svg id="map-svg" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 1919.61 1080.1">
 <defs>
     <style>
-        .cls-1{fill:#77af43;}
+        .cls-1{fill:#a8c267;}
         .cls-1,.cls-2,.cls-3{stroke:#000;stroke-miterlimit:10;stroke-width:0.28px;}
-        .cls-2{fill:#a8c267;}
+        .cls-2{fill:#77af43;}
         .cls-3{fill:#ff934a;}
         .cls-4{fill:none;}
     </style>
