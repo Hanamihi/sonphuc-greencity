@@ -24,13 +24,13 @@ Promise.all([
     alert("Không thể tải dữ liệu hoặc bản đồ. Vui lòng kiểm tra lại đường dẫn!");
 });
 
-// Hàm xử lý bản đồ (Phiên bản: 3-Pass Algorithm + Group Consensus)
+// Hàm xử lý bản đồ (Phiên bản: Adaptive Curve Alignment + Sheet Override)
 function initMap() {
     const lotElements = document.querySelectorAll('svg g[id]');
-    const lotMetrics = {}; // Lưu trữ dữ liệu trung gian
+    const lotMetrics = {}; 
 
     // ==========================================
-    // BƯỚC 1: QUÉT TẤT CẢ ĐỂ TÍNH GÓC THÔ & TỌA ĐỘ
+    // BƯỚC 1: QUÉT TẤT CẢ ĐỂ TÍNH GÓC NỘI TẠI & TỌA ĐỘ TÂM
     // ==========================================
     lotElements.forEach(lot => {
         const id = lot.id;
@@ -41,7 +41,7 @@ function initMap() {
         if (allShapes.length === 0) return;
 
         const info = dataBDS[id];
-        // Tô màu lô Đã Bán
+        // Đổi màu các lô đã bán sang màu xám
         if (info.TrangThai === "Đã bán" || info.TrangThai === "Đã Bán") {
             allShapes.forEach(shape => {
                 shape.style.fill = "#7f8c8d"; 
@@ -52,7 +52,7 @@ function initMap() {
         let bestAngle = 0;
         let maxEdgeWeight = 0;
 
-        // Tính góc nội tại dựa trên cạnh dài nhất
+        // Phân tích cấu trúc hình học tìm cạnh biên ưu tiên
         allShapes.forEach(shape => {
             let tagName = shape.tagName.toLowerCase();
             let intrinsicAngle = 0;
@@ -102,7 +102,7 @@ function initMap() {
                 weight = maxLen;
             }
 
-            // Cộng dồn Transform
+            // Cộng dồn các ma trận xoay ngầm từ AutoCAD sang SVG (Transform Matrix)
             let accRot = 0;
             let curr = shape;
             while (curr && curr !== lot.parentNode) {
@@ -126,16 +126,14 @@ function initMap() {
             }
         });
 
-        // Tìm tâm lô đất
+        // Tính toán tọa độ trọng tâm hình học của lô đất
         const bbox = lot.getBBox();
         const centerX = bbox.x + bbox.width / 2;
         const centerY = bbox.y + bbox.height / 2;
 
-        // Tách Prefix (Ví dụ: "LK22A-06" -> lấy chữ "LK22A")
         const prefixMatch = id.match(/^([a-zA-Z0-9]+)-/);
         const prefix = prefixMatch ? prefixMatch[1] : "UNKNOWN";
 
-        // Lưu vào bộ nhớ tạm
         lotMetrics[id] = {
             element: lot,
             angle: bestAngle,
@@ -145,70 +143,49 @@ function initMap() {
         };
     });
 
-// ==========================================
-    // BƯỚC 2: ĐỒNG THUẬN NHÓM (Cải tiến với Median Angle)
     // ==========================================
-    const groups = {};
-    for (let id in lotMetrics) {
-        let p = lotMetrics[id].prefix;
-        if (!groups[p]) groups[p] = [];
-        groups[p].push(lotMetrics[id]);
-    }
-
-    for (let p in groups) {
-        let siblings = groups[p];
-        if (siblings.length < 2) continue;
-
-        // 1. Lấy tất cả các góc đang có trong nhóm
-        let angles = siblings.map(s => s.angle % 180);
-        
-        // 2. Tìm góc đại diện (Mode/Median) để làm "Chuẩn" cho cả block
-        // Dùng phương pháp nhóm góc vào các "giỏ" 30 độ để tìm góc phổ biến nhất
-        let bins = {};
-        angles.forEach(a => {
-            let bin = Math.round(a / 30) * 30; // Gom nhóm các góc gần nhau
-            bins[bin] = (bins[bin] || 0) + 1;
-        });
-        
-        let targetAngle = parseInt(Object.keys(bins).reduce((a, b) => bins[a] > bins[b] ? a : b));
-
-        // 3. Ép các lô sai biệt về góc chuẩn
-        siblings.forEach(lot => {
-            let diff = Math.abs((lot.angle % 180) - targetAngle);
-            if (diff > 90) diff = Math.abs(diff - 180);
-
-            // Nếu lệch quá 30 độ so với góc chuẩn của Block -> Ép xoay về góc chuẩn
-            if (diff > 30) {
-                lot.angle = targetAngle; 
-            }
-            
-            // Chuẩn hóa cuối cùng
-            let final = lot.angle % 180;
-            if (final > 90) final -= 180;
-            if (final <= -90) final += 180;
-            lot.finalAngle = final;
-        });
-    }
-
-    // ==========================================
-    // BƯỚC 3: IN CHỮ VÀ GẮN SỰ KIỆN CLICK
+    // BƯỚC 2: CHUẨN HÓA GÓC THÔNG MINH (Hỗ trợ Tuyến Cong & Override)
     // ==========================================
     for (let id in lotMetrics) {
         let lot = lotMetrics[id];
         const info = dataBDS[id];
 
-        // Tạo thẻ <text>
+        let finalAngle = lot.angle % 180;
+
+        // ĐẶC QUYỀN ƯU TIÊN CAO NHẤT: Kiểm tra và áp dụng góc ghi đè từ Google Sheet
+        if (info.GocXoay !== undefined && info.GocXoay !== "" && info.GocXoay !== "-") {
+            let manualOverride = parseFloat(info.GocXoay);
+            if (!isNaN(manualOverride)) {
+                finalAngle += manualOverride; // Cộng thêm hoặc gán trực tiếp góc điều chỉnh từ Excel
+            }
+        }
+
+        // Đảm bảo chữ luôn xoay trong khoảng dễ đọc mắt người (-90 độ đến 90 độ)
+        while (finalAngle > 90) finalAngle -= 180;
+        while (finalAngle <= -90) finalAngle += 180;
+        
+        lot.finalAngle = finalAngle;
+    }
+
+    // ==========================================
+    // BƯỚC 3: IN TEXT LABEL & ĐỔ SỰ KIỆN TƯƠNG TÁC CLICK
+    // ==========================================
+    for (let id in lotMetrics) {
+        let lot = lotMetrics[id];
+        const info = dataBDS[id];
+
+        // Tạo thẻ SVG Text viết tên nhãn lô
         const textLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
         textLabel.setAttribute("x", lot.centerX);
         textLabel.setAttribute("y", lot.centerY);
         textLabel.setAttribute("text-anchor", "middle");
-        textLabel.setAttribute("dominant-baseline", "central");
+        textLabel.setAttribute("dominant-baseline", "central"); // Giữ chữ luôn đồng tâm tuyệt đối
         textLabel.setAttribute("class", "lot-label");
         textLabel.setAttribute("transform", `rotate(${lot.finalAngle} ${lot.centerX} ${lot.centerY})`);
         textLabel.textContent = id; 
         lot.element.appendChild(textLabel);
 
-        // Gắn sự kiện Click hiển thị bảng thông tin
+        // Đổ sự kiện Click mở bảng thông tin (Giữ nguyên cấu trúc phân phối dữ liệu của anh)
         lot.element.addEventListener('click', function(e) {
             document.getElementById('malo').innerText = "Lô: " + id;
             
@@ -227,18 +204,18 @@ function initMap() {
             
             const constructInfo = document.getElementById('construction-info');
             
-            if (info.Loai.toLowerCase() === "đất nền") {
+            if (info.Loai && info.Loai.toLowerCase() === "đất nền") {
                 constructInfo.style.display = "none";
             } else {
                 constructInfo.style.display = "block";
-                document.getElementById('sotang').innerText = info.ChieuCao;
-                document.getElementById('dtxd').innerText = info.DienTichXD;
-                document.getElementById('matdo').innerText = info.MatDo;
-                document.getElementById('t1').innerText = info.Tang1;
-                document.getElementById('t2').innerText = info.Tang2;
-                document.getElementById('t3').innerText = info.Tang3;
-                document.getElementById('t4').innerText = info.Tang4;
-                document.getElementById('tongSan').innerText = info.TongSanXD;
+                document.getElementById('sotang').innerText = info.ChieuCao || "-";
+                document.getElementById('dtxd').innerText = info.DienTichXD || "-";
+                document.getElementById('matdo').innerText = info.MatDo || "-";
+                document.getElementById('t1').innerText = info.Tang1 || "-";
+                document.getElementById('t2').innerText = info.Tang2 || "-";
+                document.getElementById('t3').innerText = info.Tang3 || "-";
+                document.getElementById('t4').innerText = info.Tang4 || "-";
+                document.getElementById('tongSan').innerText = info.TongSanXD || "-";
             }
 
             infoBox.style.display = "block";
