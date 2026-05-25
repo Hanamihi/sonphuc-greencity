@@ -23,7 +23,7 @@ Promise.all([
     console.error("Lỗi khởi tạo:", error);
     alert("Không thể tải dữ liệu hoặc bản đồ. Vui lòng kiểm tra lại đường dẫn!");
 });
-// Hàm xử lý bản đồ và tương tác (Phiên bản Tích hợp Transform Accumulator)
+// Hàm xử lý bản đồ và tương tác (Phiên bản Tích hợp Transform Accumulator & PCA-lite)
 function initMap() {
     document.querySelectorAll('svg g[id]').forEach(lot => {
         const id = lot.id;
@@ -51,7 +51,7 @@ function initMap() {
             allShapes.forEach(shape => {
                 let tagName = shape.tagName.toLowerCase();
                 let intrinsicAngle = 0;
-                let weight = 0; // Trọng số ưu tiên (dựa trên chiều dài cạnh)
+                let weight = 0;
 
                 // 1. Tìm góc nội tại của hình khối
                 if (tagName === 'rect') {
@@ -69,9 +69,10 @@ function initMap() {
                         if (ptsStr) {
                             const coords = ptsStr.trim().split(/[\s,]+/).map(parseFloat);
                             for (let i = 0; i < coords.length; i += 2) {
-                                if (!isNaN(coords[i]) && !isNaN(coords[i+1])) points.push({x: coords[i], y: coords[i+1]});
+                                if (!isNaN(coords[i]) && !isNaN(coords[i+1])) {
+                                    points.push({x: coords[i], y: coords[i+1]});
+                                }
                             }
-                            if (tagName === 'polygon' && points.length > 0) points.push(points[0]); // Nối điểm cuối về đầu
                         }
                     } else if (tagName === 'path') {
                         const d = shape.getAttribute('d');
@@ -79,27 +80,48 @@ function initMap() {
                             const coords = d.match(/[-+]?[0-9]*\.?[0-9]+/g);
                             if (coords) {
                                 for (let i = 0; i < coords.length; i += 2) {
-                                    if (!isNaN(coords[i]) && !isNaN(coords[i+1])) points.push({x: parseFloat(coords[i]), y: parseFloat(coords[i+1])});
+                                    if (!isNaN(coords[i]) && !isNaN(coords[i+1])) {
+                                        points.push({x: parseFloat(coords[i]), y: parseFloat(coords[i+1])});
+                                    }
                                 }
                             }
                         }
                     }
 
-                    // Tìm vector cạnh dài nhất trong đa giác để làm trục chữ
-                    let maxLen = 0;
-                    for (let i = 0; i < points.length - 1; i++) {
-                        let dx = points[i+1].x - points[i].x;
-                        let dy = points[i+1].y - points[i].y;
-                        let len = Math.sqrt(dx*dx + dy*dy);
-                        if (len > maxLen) {
-                            maxLen = len;
-                            intrinsicAngle = Math.atan2(dy, dx) * (180 / Math.PI);
-                        }
+                    // ===== TÌM TRỤC CHÍNH CỦA HÌNH (PCA-LITE) =====
+                    if (points.length >= 2) {
+                        // Tính tâm
+                        let meanX = 0;
+                        let meanY = 0;
+                        points.forEach(p => {
+                            meanX += p.x;
+                            meanY += p.y;
+                        });
+                        meanX /= points.length;
+                        meanY /= points.length;
+
+                        // Covariance matrix
+                        let sxx = 0;
+                        let syy = 0;
+                        let sxy = 0;
+                        points.forEach(p => {
+                            let dx = p.x - meanX;
+                            let dy = p.y - meanY;
+                            sxx += dx * dx;
+                            syy += dy * dy;
+                            sxy += dx * dy;
+                        });
+
+                        // Góc principal axis
+                        let theta = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+                        intrinsicAngle = theta * (180 / Math.PI);
+                        
+                        // Weight = độ trải dài
+                        weight = Math.max(sxx, syy);
                     }
-                    weight = maxLen;
                 }
 
-                // 2. Cộng dồn góc bị xoay bởi thuộc tính Transform (Bí quyết sửa lỗi cho LK22A)
+                // 2. Cộng dồn góc bị xoay bởi thuộc tính Transform của CAD
                 let accRot = 0;
                 let curr = shape;
                 while (curr && curr !== lot.parentNode) {
@@ -117,17 +139,17 @@ function initMap() {
                     curr = curr.parentNode;
                 }
 
-                // 3. Quyết định góc cuối cùng dựa vào cạnh dài nhất của toàn bộ lô đất
+                // 3. Quyết định góc cuối cùng
                 if (weight > maxEdgeWeight) {
                     maxEdgeWeight = weight;
                     bestAngle = intrinsicAngle + accRot;
                 }
             });
 
-            // 4. Chuẩn hóa góc để người dùng không phải ngoái cổ đọc ngược (Giữ góc -90 đến 90)
+            // 4. Chuẩn hóa góc để người dùng không phải ngoái cổ đọc ngược
             let finalAngle = bestAngle % 180;
             if (finalAngle > 90) finalAngle -= 180;
-            if (finalAngle <= -90) finalAngle += 180;
+            if (finalAngle < -90) finalAngle += 180; // Fix nhảy hướng
 
             // 5. Tính toán tâm lô đất và chèn chữ
             const bbox = lot.getBBox();
