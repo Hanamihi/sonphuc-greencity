@@ -23,7 +23,7 @@ Promise.all([
     console.error("Lỗi khởi tạo:", error);
     alert("Không thể tải dữ liệu hoặc bản đồ. Vui lòng kiểm tra lại đường dẫn!");
 });
-// Hàm xử lý bản đồ (Phiên bản: 3-Pass Algorithm + Group Consensus)
+// Hàm xử lý bản đồ (Phiên bản: Smart Consensus + Sheet Manual Override)
 function initMap() {
     const lotElements = document.querySelectorAll('svg g[id]');
     const lotMetrics = {}; // Lưu trữ dữ liệu trung gian
@@ -101,7 +101,7 @@ function initMap() {
                 weight = maxLen;
             }
 
-            // Cộng dồn Transform
+            // Cộng dồn Transform từ file AutoCAD xuất ra
             let accRot = 0;
             let curr = shape;
             while (curr && curr !== lot.parentNode) {
@@ -125,27 +125,28 @@ function initMap() {
             }
         });
 
-        // Tìm tâm lô đất
+        // Tìm tâm hình học của lô đất
         const bbox = lot.getBBox();
         const centerX = bbox.x + bbox.width / 2;
         const centerY = bbox.y + bbox.height / 2;
 
-        // Tách Prefix (Ví dụ: "LK22A-06" -> lấy chữ "LK22A")
+        // Tách Block Prefix (Ví dụ: "LK22A-06" -> "LK22A")
         const prefixMatch = id.match(/^([a-zA-Z0-9]+)-/);
         const prefix = prefixMatch ? prefixMatch[1] : "UNKNOWN";
 
-        // Lưu vào bộ nhớ tạm
+        // Lưu trữ các thông số đo đạc gốc
         lotMetrics[id] = {
             element: lot,
             angle: bestAngle,
+            finalAngle: bestAngle, // Mặc định ban đầu
             centerX: centerX,
             centerY: centerY,
             prefix: prefix
         };
     });
 
-// ==========================================
-    // BƯỚC 2: ĐỒNG THUẬN NHÓM (Cải tiến với Median Angle)
+    // ==========================================
+    // BƯỚC 2: ĐỒNG THUẬN NHÓM THÔNG MINH (Smart Curves & L-Shape)
     // ==========================================
     const groups = {};
     for (let id in lotMetrics) {
@@ -158,45 +159,59 @@ function initMap() {
         let siblings = groups[p];
         if (siblings.length < 2) continue;
 
-        // 1. Lấy tất cả các góc đang có trong nhóm
         let angles = siblings.map(s => s.angle % 180);
         
-        // 2. Tìm góc đại diện (Mode/Median) để làm "Chuẩn" cho cả block
-        // Dùng phương pháp nhóm góc vào các "giỏ" 30 độ để tìm góc phổ biến nhất
+        // Gom nhóm tìm góc phổ biến nhất làm trục định chuẩn cho block thẳng
         let bins = {};
         angles.forEach(a => {
-            let bin = Math.round(a / 30) * 30; // Gom nhóm các góc gần nhau
+            let bin = Math.round(a / 30) * 30;
             bins[bin] = (bins[bin] || 0) + 1;
         });
-        
         let targetAngle = parseInt(Object.keys(bins).reduce((a, b) => bins[a] > bins[b] ? a : b));
 
-        // 3. Ép các lô sai biệt về góc chuẩn
         siblings.forEach(lot => {
+            const info = dataBDS[lot.element.id];
+            
+            // KIỂM TRA LỚP 1: Kiểm tra xem có Override thủ công từ cột GocXoay trên Sheet không
+            if (info && info.GocXoay !== undefined && info.GocXoay !== "" && info.GocXoay !== "-") {
+                let manualAngle = parseFloat(info.GocXoay);
+                if (!isNaN(manualAngle)) {
+                    // Nếu trên Sheet có điền, ưu tiên số 1, áp thẳng góc mong muốn
+                    lot.finalAngle = manualAngle;
+                    return; // Thoát xử lý tự động cho lô này
+                }
+            }
+
+            // KIỂM TRA LỚP 2 (Thuật toán tự động cho đường cong và góc chữ L):
             let diff = Math.abs((lot.angle % 180) - targetAngle);
             if (diff > 90) diff = Math.abs(diff - 180);
 
-            // Nếu lệch quá 30 độ so với góc chuẩn của Block -> Ép xoay về góc chuẩn
-            if (diff > 30) {
-                lot.angle = targetAngle; 
+            // CẢI TIẾN: Nếu độ lệch nằm trong khoảng dưới 25 độ, chứng tỏ đây là tuyến ĐƯỜNG CONG 
+            // HOẶC nếu lệch hẳn trên 65 độ (gần vuông góc 90 độ), chứng tỏ là CẠNH NGẮN CHỮ L (Dãy LK28)
+            // -> Giữ nguyên góc tự nhiên máy tính được, không ép về góc trung vị nữa.
+            if (diff <= 25 || diff >= 65) {
+                let final = lot.angle % 180;
+                if (final > 90) final -= 180;
+                if (final <= -90) final += 180;
+                lot.finalAngle = final;
+            } else {
+                // Chỉ những lô chệch hướng vô lý mới ép về xu hướng chung của block
+                let final = targetAngle % 180;
+                if (final > 90) final -= 180;
+                if (final <= -90) final += 180;
+                lot.finalAngle = final;
             }
-            
-            // Chuẩn hóa cuối cùng
-            let final = lot.angle % 180;
-            if (final > 90) final -= 180;
-            if (final <= -90) final += 180;
-            lot.finalAngle = final;
         });
     }
 
     // ==========================================
-    // BƯỚC 3: IN CHỮ VÀ GẮN SỰ KIỆN CLICK
+    // BƯỚC 3: VẼ NHÃN VÀ GẮN SỰ KIỆN CLICK
     // ==========================================
     for (let id in lotMetrics) {
         let lot = lotMetrics[id];
         const info = dataBDS[id];
 
-        // Tạo thẻ <text>
+        // Tạo nhãn Text SVG chuẩn
         const textLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
         textLabel.setAttribute("x", lot.centerX);
         textLabel.setAttribute("y", lot.centerY);
@@ -207,7 +222,7 @@ function initMap() {
         textLabel.textContent = id; 
         lot.element.appendChild(textLabel);
 
-        // Gắn sự kiện Click hiển thị bảng thông tin
+        // Sự kiện Click xem bảng thông tin
         lot.element.addEventListener('click', function(e) {
             document.getElementById('malo').innerText = "Lô: " + id;
             
