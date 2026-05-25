@@ -23,7 +23,7 @@ Promise.all([
     console.error("Lỗi khởi tạo:", error);
     alert("Không thể tải dữ liệu hoặc bản đồ. Vui lòng kiểm tra lại đường dẫn!");
 });
-// Hàm xử lý bản đồ và tương tác (Phiên bản Tích hợp Transform Accumulator & PCA-lite)
+// Hàm xử lý bản đồ (Tích hợp thuật toán PCA không gian và Override từ Sheet)
 function initMap() {
     document.querySelectorAll('svg g[id]').forEach(lot => {
         const id = lot.id;
@@ -32,11 +32,10 @@ function initMap() {
             const info = dataBDS[id];
             lot.classList.add('lot-interactive');
 
-            // Quét tất cả các nét tạo nên lô đất
             const allShapes = lot.querySelectorAll('rect, polygon, path, polyline, line');
             if (allShapes.length === 0) return;
             
-            // Đổi màu Đã Bán cho toàn bộ các nét
+            // Đổi màu Đã Bán
             if (info.TrangThai === "Đã bán" || info.TrangThai === "Đã Bán") {
                 allShapes.forEach(shape => {
                     shape.style.fill = "#7f8c8d"; 
@@ -44,114 +43,94 @@ function initMap() {
                 });
             }
 
-            // --- THUẬT TOÁN TÌM GÓC ĐỘ CHUẨN XÁC ---
-            let bestAngle = 0;
-            let maxEdgeWeight = 0;
+            // --- THUẬT TOÁN 1: Tìm góc xoay Transform ngầm của CAD ---
+            let accRot = 0;
+            let curr = allShapes[0];
+            while (curr && curr !== lot.parentNode) {
+                let tf = curr.getAttribute('transform');
+                if (tf) {
+                    let rMatch = tf.match(/rotate\(([-0-9.]+)/);
+                    if (rMatch) accRot += parseFloat(rMatch[1]);
+                    
+                    let mMatch = tf.match(/matrix\(([^)]+)\)/);
+                    if (mMatch) {
+                        let vals = mMatch[1].split(/[\s,]+/).map(parseFloat);
+                        if (vals.length >= 4) accRot += Math.atan2(vals[1], vals[0]) * (180 / Math.PI);
+                    }
+                }
+                curr = curr.parentNode;
+            }
+
+            // --- THUẬT TOÁN 2: Phân tích PCA (Principal Component Analysis) ---
+            let segments = [];
+            function addSeg(x1, y1, x2, y2) {
+                let dx = x2 - x1, dy = y2 - y1;
+                let len = Math.sqrt(dx*dx + dy*dy);
+                if (len > 0.5) segments.push({x1, y1, x2, y2, len});
+            }
 
             allShapes.forEach(shape => {
                 let tagName = shape.tagName.toLowerCase();
-                let intrinsicAngle = 0;
-                let weight = 0;
-
-                // 1. Tìm góc nội tại của hình khối
                 if (tagName === 'rect') {
-                    const w = parseFloat(shape.getAttribute('width') || 0);
-                    const h = parseFloat(shape.getAttribute('height') || 0);
-                    intrinsicAngle = (h > w) ? -90 : 0;
-                    weight = Math.max(w, h);
-                } else {
-                    let points = [];
-                    if (tagName === 'line') {
-                        points.push({x: parseFloat(shape.getAttribute('x1')), y: parseFloat(shape.getAttribute('y1'))});
-                        points.push({x: parseFloat(shape.getAttribute('x2')), y: parseFloat(shape.getAttribute('y2'))});
-                    } else if (tagName === 'polygon' || tagName === 'polyline') {
-                        const ptsStr = shape.getAttribute('points');
-                        if (ptsStr) {
-                            const coords = ptsStr.trim().split(/[\s,]+/).map(parseFloat);
-                            for (let i = 0; i < coords.length; i += 2) {
-                                if (!isNaN(coords[i]) && !isNaN(coords[i+1])) {
-                                    points.push({x: coords[i], y: coords[i+1]});
-                                }
-                            }
+                    let x = parseFloat(shape.getAttribute('x')||0), y = parseFloat(shape.getAttribute('y')||0);
+                    let w = parseFloat(shape.getAttribute('width')||0), h = parseFloat(shape.getAttribute('height')||0);
+                    addSeg(x, y, x+w, y); addSeg(x+w, y, x+w, y+h); addSeg(x+w, y+h, x, y+h); addSeg(x, y+h, x, y);
+                } else if (tagName === 'line') {
+                    addSeg(parseFloat(shape.getAttribute('x1')), parseFloat(shape.getAttribute('y1')),
+                           parseFloat(shape.getAttribute('x2')), parseFloat(shape.getAttribute('y2')));
+                } else if (tagName === 'polygon' || tagName === 'polyline') {
+                    const ptsStr = shape.getAttribute('points');
+                    if (ptsStr) {
+                        const coords = ptsStr.trim().split(/[\s,]+/).map(parseFloat).filter(n => !isNaN(n));
+                        for (let i = 0; i < coords.length - 3; i += 2) {
+                            addSeg(coords[i], coords[i+1], coords[i+2], coords[i+3]);
                         }
-                    } else if (tagName === 'path') {
-                        const d = shape.getAttribute('d');
-                        if (d) {
-                            const coords = d.match(/[-+]?[0-9]*\.?[0-9]+/g);
-                            if (coords) {
-                                for (let i = 0; i < coords.length; i += 2) {
-                                    if (!isNaN(coords[i]) && !isNaN(coords[i+1])) {
-                                        points.push({x: parseFloat(coords[i]), y: parseFloat(coords[i+1])});
-                                    }
-                                }
-                            }
+                        if (tagName === 'polygon' && coords.length >= 4) {
+                            addSeg(coords[coords.length-2], coords[coords.length-1], coords[0], coords[1]);
                         }
                     }
-
-                    // ===== TÌM TRỤC CHÍNH CỦA HÌNH (PCA-LITE) =====
-                    if (points.length >= 2) {
-                        // Tính tâm
-                        let meanX = 0;
-                        let meanY = 0;
-                        points.forEach(p => {
-                            meanX += p.x;
-                            meanY += p.y;
-                        });
-                        meanX /= points.length;
-                        meanY /= points.length;
-
-                        // Covariance matrix
-                        let sxx = 0;
-                        let syy = 0;
-                        let sxy = 0;
-                        points.forEach(p => {
-                            let dx = p.x - meanX;
-                            let dy = p.y - meanY;
-                            sxx += dx * dx;
-                            syy += dy * dy;
-                            sxy += dx * dy;
-                        });
-
-                        // Góc principal axis
-                        let theta = 0.5 * Math.atan2(2 * sxy, sxx - syy);
-                        intrinsicAngle = theta * (180 / Math.PI);
-                        
-                        // Weight = độ trải dài
-                        weight = Math.max(sxx, syy);
-                    }
-                }
-
-                // 2. Cộng dồn góc bị xoay bởi thuộc tính Transform của CAD
-                let accRot = 0;
-                let curr = shape;
-                while (curr && curr !== lot.parentNode) {
-                    let tf = curr.getAttribute('transform');
-                    if (tf) {
-                        let rMatch = tf.match(/rotate\(([-0-9.]+)/);
-                        if (rMatch) accRot += parseFloat(rMatch[1]);
-                        
-                        let mMatch = tf.match(/matrix\(([^)]+)\)/);
-                        if (mMatch) {
-                            let vals = mMatch[1].split(/[\s,]+/).map(parseFloat);
-                            if (vals.length >= 4) accRot += Math.atan2(vals[1], vals[0]) * (180 / Math.PI);
-                        }
-                    }
-                    curr = curr.parentNode;
-                }
-
-                // 3. Quyết định góc cuối cùng
-                if (weight > maxEdgeWeight) {
-                    maxEdgeWeight = weight;
-                    bestAngle = intrinsicAngle + accRot;
                 }
             });
 
-            // 4. Chuẩn hóa góc để người dùng không phải ngoái cổ đọc ngược
-            let finalAngle = bestAngle % 180;
-            if (finalAngle > 90) finalAngle -= 180;
-            if (finalAngle < -90) finalAngle += 180; // Fix nhảy hướng
+            let intrinsicAngle = 0;
+            if (segments.length > 0) {
+                // Tìm trọng tâm chu vi
+                let cx = 0, cy = 0, totalLen = 0;
+                segments.forEach(seg => {
+                    let mx = (seg.x1 + seg.x2)/2, my = (seg.y1 + seg.y2)/2;
+                    cx += mx * seg.len; cy += my * seg.len; totalLen += seg.len;
+                });
+                if (totalLen > 0) { cx /= totalLen; cy /= totalLen; }
 
-            // 5. Tính toán tâm lô đất và chèn chữ
+                // Tính ma trận hiệp phương sai để tìm trục chính
+                let Ixx = 0, Iyy = 0, Ixy = 0;
+                segments.forEach(seg => {
+                    let mx = (seg.x1 + seg.x2)/2 - cx;
+                    let my = (seg.y1 + seg.y2)/2 - cy;
+                    Ixx += (mx * mx) * seg.len;
+                    Iyy += (my * my) * seg.len;
+                    Ixy += (mx * my) * seg.len;
+                });
+                intrinsicAngle = 0.5 * Math.atan2(2 * Ixy, Ixx - Iyy) * (180 / Math.PI);
+            }
+
+            // 3. Tổng hợp góc và chuẩn hóa (Mặc định)
+            let finalAngle = (intrinsicAngle + accRot) % 180;
+            
+            // 4. [TÍNH NĂNG ĐẶC QUYỀN]: Đọc góc điều chỉnh thủ công từ Google Sheet
+            // Nếu bạn có cột "GocXoay" trên sheet, code sẽ tự động nhận và cộng thêm vào
+            if (info.GocXoay !== undefined && info.GocXoay !== "" && info.GocXoay !== "-") {
+                let manualAngle = parseFloat(info.GocXoay);
+                if (!isNaN(manualAngle)) {
+                    finalAngle += manualAngle;
+                }
+            }
+
+            // Chuẩn hóa lần cuối để chữ luôn đọc được từ trái sang phải
+            while (finalAngle > 90) finalAngle -= 180;
+            while (finalAngle <= -90) finalAngle += 180;
+
+            // 5. Chèn nhãn Text vào tâm
             const bbox = lot.getBBox();
             const centerX = bbox.x + bbox.width / 2;
             const centerY = bbox.y + bbox.height / 2;
@@ -166,7 +145,7 @@ function initMap() {
             textLabel.textContent = id; 
             lot.appendChild(textLabel);
 
-            // --- SỰ KIỆN CLICK MỞ POPUP DỮ LIỆU ---
+            // --- SỰ KIỆN CLICK MỞ POPUP (Giữ nguyên cấu trúc Map dữ liệu) ---
             lot.addEventListener('click', function(e) {
                 document.getElementById('malo').innerText = "Lô: " + id;
                 
@@ -185,18 +164,18 @@ function initMap() {
                 
                 const constructInfo = document.getElementById('construction-info');
                 
-                if (info.Loai.toLowerCase() === "đất nền") {
+                if (info.Loai && info.Loai.toLowerCase() === "đất nền") {
                     constructInfo.style.display = "none";
                 } else {
                     constructInfo.style.display = "block";
-                    document.getElementById('sotang').innerText = info.ChieuCao;
-                    document.getElementById('dtxd').innerText = info.DienTichXD;
-                    document.getElementById('matdo').innerText = info.MatDo;
-                    document.getElementById('t1').innerText = info.Tang1;
-                    document.getElementById('t2').innerText = info.Tang2;
-                    document.getElementById('t3').innerText = info.Tang3;
-                    document.getElementById('t4').innerText = info.Tang4;
-                    document.getElementById('tongSan').innerText = info.TongSanXD;
+                    document.getElementById('sotang').innerText = info.ChieuCao || "-";
+                    document.getElementById('dtxd').innerText = info.DienTichXD || "-";
+                    document.getElementById('matdo').innerText = info.MatDo || "-";
+                    document.getElementById('t1').innerText = info.Tang1 || "-";
+                    document.getElementById('t2').innerText = info.Tang2 || "-";
+                    document.getElementById('t3').innerText = info.Tang3 || "-";
+                    document.getElementById('t4').innerText = info.Tang4 || "-";
+                    document.getElementById('tongSan').innerText = info.TongSanXD || "-";
                 }
 
                 infoBox.style.display = "block";
