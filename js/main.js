@@ -23,8 +23,12 @@ Promise.all([
     console.error("Lỗi khởi tạo:", error);
     alert("Không thể tải dữ liệu hoặc bản đồ. Vui lòng kiểm tra lại đường dẫn!");
 });
-// Hàm xử lý bản đồ và tương tác (Phiên bản Tích hợp Transform Accumulator & PCA-lite)
+
+// Hàm xử lý bản đồ và tương tác (Phiên bản tích hợp Thuật toán hàng xóm KNN)
 function initMap() {
+    let lotsData = []; // Mảng lưu trữ dữ liệu tính toán tạm thời
+
+    // BƯỚC 1: QUÉT VÀ TÍNH TOÁN GÓC THÔ CHO TẤT CẢ CÁC LÔ
     document.querySelectorAll('svg g[id]').forEach(lot => {
         const id = lot.id;
         
@@ -32,11 +36,10 @@ function initMap() {
             const info = dataBDS[id];
             lot.classList.add('lot-interactive');
 
-            // Quét tất cả các nét tạo nên lô đất
             const allShapes = lot.querySelectorAll('rect, polygon, path, polyline, line');
             if (allShapes.length === 0) return;
             
-            // Đổi màu Đã Bán cho toàn bộ các nét
+            // Đổi màu Đã Bán
             if (info.TrangThai === "Đã bán" || info.TrangThai === "Đã Bán") {
                 allShapes.forEach(shape => {
                     shape.style.fill = "#7f8c8d"; 
@@ -44,7 +47,6 @@ function initMap() {
                 });
             }
 
-            // --- THUẬT TOÁN TÌM GÓC ĐỘ CHUẨN XÁC ---
             let bestAngle = 0;
             let maxEdgeWeight = 0;
 
@@ -53,7 +55,7 @@ function initMap() {
                 let intrinsicAngle = 0;
                 let weight = 0;
 
-                // 1. Tìm góc nội tại của hình khối
+                // Tính góc nội tại của hình khối
                 if (tagName === 'rect') {
                     const w = parseFloat(shape.getAttribute('width') || 0);
                     const h = parseFloat(shape.getAttribute('height') || 0);
@@ -69,10 +71,9 @@ function initMap() {
                         if (ptsStr) {
                             const coords = ptsStr.trim().split(/[\s,]+/).map(parseFloat);
                             for (let i = 0; i < coords.length; i += 2) {
-                                if (!isNaN(coords[i]) && !isNaN(coords[i+1])) {
-                                    points.push({x: coords[i], y: coords[i+1]});
-                                }
+                                if (!isNaN(coords[i]) && !isNaN(coords[i+1])) points.push({x: coords[i], y: coords[i+1]});
                             }
+                            if (tagName === 'polygon' && points.length > 0) points.push(points[0]); 
                         }
                     } else if (tagName === 'path') {
                         const d = shape.getAttribute('d');
@@ -80,48 +81,27 @@ function initMap() {
                             const coords = d.match(/[-+]?[0-9]*\.?[0-9]+/g);
                             if (coords) {
                                 for (let i = 0; i < coords.length; i += 2) {
-                                    if (!isNaN(coords[i]) && !isNaN(coords[i+1])) {
-                                        points.push({x: parseFloat(coords[i]), y: parseFloat(coords[i+1])});
-                                    }
+                                    if (!isNaN(coords[i]) && !isNaN(coords[i+1])) points.push({x: parseFloat(coords[i]), y: parseFloat(coords[i+1])});
                                 }
                             }
                         }
                     }
 
-                    // ===== TÌM TRỤC CHÍNH CỦA HÌNH (PCA-LITE) =====
-                    if (points.length >= 2) {
-                        // Tính tâm
-                        let meanX = 0;
-                        let meanY = 0;
-                        points.forEach(p => {
-                            meanX += p.x;
-                            meanY += p.y;
-                        });
-                        meanX /= points.length;
-                        meanY /= points.length;
-
-                        // Covariance matrix
-                        let sxx = 0;
-                        let syy = 0;
-                        let sxy = 0;
-                        points.forEach(p => {
-                            let dx = p.x - meanX;
-                            let dy = p.y - meanY;
-                            sxx += dx * dx;
-                            syy += dy * dy;
-                            sxy += dx * dy;
-                        });
-
-                        // Góc principal axis
-                        let theta = 0.5 * Math.atan2(2 * sxy, sxx - syy);
-                        intrinsicAngle = theta * (180 / Math.PI);
-                        
-                        // Weight = độ trải dài
-                        weight = Math.max(sxx, syy);
+                    // Tìm cạnh dài nhất của đa giác
+                    let maxLen = 0;
+                    for (let i = 0; i < points.length - 1; i++) {
+                        let dx = points[i+1].x - points[i].x;
+                        let dy = points[i+1].y - points[i].y;
+                        let len = Math.sqrt(dx*dx + dy*dy);
+                        if (len > maxLen) {
+                            maxLen = len;
+                            intrinsicAngle = Math.atan2(dy, dx) * (180 / Math.PI);
+                        }
                     }
+                    weight = maxLen;
                 }
 
-                // 2. Cộng dồn góc bị xoay bởi thuộc tính Transform của CAD
+                // Cộng dồn góc xoay từ thẻ Group (Transform Accumulator)
                 let accRot = 0;
                 let curr = shape;
                 while (curr && curr !== lot.parentNode) {
@@ -139,114 +119,117 @@ function initMap() {
                     curr = curr.parentNode;
                 }
 
-                // 3. Quyết định góc cuối cùng
                 if (weight > maxEdgeWeight) {
                     maxEdgeWeight = weight;
                     bestAngle = intrinsicAngle + accRot;
                 }
             });
 
-            // 4. Chuẩn hóa góc để người dùng không phải ngoái cổ đọc ngược
+            // Chuẩn hóa góc về mốc -90 đến 90 độ
             let finalAngle = bestAngle % 180;
             if (finalAngle > 90) finalAngle -= 180;
-            if (finalAngle < -90) finalAngle += 180; // Fix nhảy hướng
+            if (finalAngle <= -90) finalAngle += 180;
 
-            // 5. Tính toán tâm lô đất và chèn chữ
             const bbox = lot.getBBox();
-            const centerX = bbox.x + bbox.width / 2;
-            const centerY = bbox.y + bbox.height / 2;
+            const cx = bbox.x + bbox.width / 2;
+            const cy = bbox.y + bbox.height / 2;
+            
+            // Lấy tên phân khu (Ví dụ: từ LK22A-06 lấy ra chữ LK22A)
+            const prefix = id.split('-')[0];
 
-            const textLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
-            textLabel.setAttribute("x", centerX);
-            textLabel.setAttribute("y", centerY);
-            textLabel.setAttribute("text-anchor", "middle");
-            textLabel.setAttribute("dominant-baseline", "central"); 
-            textLabel.setAttribute("class", "lot-label");
-            textLabel.setAttribute("transform", `rotate(${finalAngle} ${centerX} ${centerY})`);
-            textLabel.textContent = id; 
-            lot.appendChild(textLabel);
-
-            // --- SỰ KIỆN CLICK MỞ POPUP DỮ LIỆU ---
-            lot.addEventListener('click', function(e) {
-                document.getElementById('malo').innerText = "Lô: " + id;
-                
-                const statusEl = document.getElementById('trangThai');
-                statusEl.innerText = info.TrangThai; 
-                if (info.TrangThai === "Đang bán") {
-                    statusEl.style.color = "#27ae60"; 
-                } else if (info.TrangThai === "Đã bán" || info.TrangThai === "Đã Bán") {
-                    statusEl.style.color = "#e74c3c"; 
-                } else {
-                    statusEl.style.color = "#f39c12"; 
-                }
-
-                document.getElementById('loai').innerText = info.Loai;
-                document.getElementById('dientich').innerText = info.DienTichLo;
-                
-                const constructInfo = document.getElementById('construction-info');
-                
-                if (info.Loai.toLowerCase() === "đất nền") {
-                    constructInfo.style.display = "none";
-                } else {
-                    constructInfo.style.display = "block";
-                    document.getElementById('sotang').innerText = info.ChieuCao;
-                    document.getElementById('dtxd').innerText = info.DienTichXD;
-                    document.getElementById('matdo').innerText = info.MatDo;
-                    document.getElementById('t1').innerText = info.Tang1;
-                    document.getElementById('t2').innerText = info.Tang2;
-                    document.getElementById('t3').innerText = info.Tang3;
-                    document.getElementById('t4').innerText = info.Tang4;
-                    document.getElementById('tongSan').innerText = info.TongSanXD;
-                }
-
-                infoBox.style.display = "block";
-                if (window.innerWidth <= 768) {
-                    infoBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                }
-                e.stopPropagation(); 
-            });
+            // Lưu vào mảng để chuẩn bị đối chiếu hàng xóm
+            lotsData.push({ id, lot, info, angle: finalAngle, cx, cy, prefix });
         }
     });
-}
 
-// Đóng popup khi click ra ngoài
-document.addEventListener('click', function() { infoBox.style.display = "none"; });
-infoBox.addEventListener('click', function(e) { e.stopPropagation(); });
+    // BƯỚC 2: THUẬT TOÁN ĐỒNG BỘ GÓC THEO SỐ ĐÔNG HÀNG XÓM (KNN)
+    lotsData.forEach(item => {
+        // Lọc ra các lô đất cùng phân khu (cùng prefix)
+        let neighbors = lotsData.filter(other => other.prefix === item.prefix && other.id !== item.id);
+        
+        if (neighbors.length > 0) {
+            // Sắp xếp để tìm ra những lô ở gần vị trí vật lý nhất
+            neighbors.sort((a, b) => {
+                let distA = Math.hypot(a.cx - item.cx, a.cy - item.cy);
+                let distB = Math.hypot(b.cx - item.cx, b.cy - item.cy);
+                return distA - distB;
+            });
 
-// Hàm khởi tạo Zoom (Giữ nguyên logic của bạn)
-function initZoom() {
-        var eventsHandler = {
-            haltEventListeners: ['touchstart', 'touchend', 'touchmove', 'touchleave', 'touchcancel'],
-            init: function(options) {
-                var instance = options.instance, initialScale = 1, pannedX = 0, pannedY = 0;
-                this.hammer = new Hammer(options.svgElement, { 
-                    recognizers: [ [Hammer.Pan, {direction: Hammer.DIRECTION_ALL}], [Hammer.Pinch, {enable: true}] ] 
-                });
-                this.hammer.on('panstart panmove', function(ev){
-                    if (ev.type === 'panstart') { pannedX = 0; pannedY = 0; }
-                    instance.panBy({x: ev.deltaX - pannedX, y: ev.deltaY - pannedY});
-                    pannedX = ev.deltaX; pannedY = ev.deltaY;
-                });
-                this.hammer.on('pinchstart pinchmove', function(ev){
-                    if (ev.type === 'pinchstart') { initialScale = instance.getZoom(); }
-                    instance.zoomAtPoint(initialScale * ev.scale, {x: ev.center.x, y: ev.center.y});
-                });
-            },
-            destroy: function(){ this.hammer.destroy(); }
-        };
+            // Lấy 3 hàng xóm gần sát vách nhất
+            let closest = neighbors.slice(0, 3);
+            
+            // Đếm số hàng xóm có góc bị lệch ~90 độ so với lô hiện tại
+            let flipVotes = 0;
+            closest.forEach(n => {
+                let diff = Math.abs(item.angle - n.angle) % 180;
+                if (diff > 90) diff = 180 - diff;
+                if (diff > 45) flipVotes++; // Lệch trên 45 độ được xem là trục ngang
+            });
 
-        svgPanZoom('#map-svg', {
-            zoomEnabled: true,
-            controlIconsEnabled: true, 
-            fit: true,                 
-            center: true,              
-            minZoom: 0.5,
-            maxZoom: 10,
-            mouseWheelZoomEnabled: true, 
-            preventMouseEventsDefault: false, 
-            customEventsHandler: eventsHandler 
+            // Nếu quá nửa số hàng xóm gần nhất (2/3) quay hướng khác, ta sẽ bẻ góc 90 độ theo họ
+            if (flipVotes >= Math.ceil(closest.length / 2.0)) {
+                item.angle += 90;
+                // Chuẩn hóa lại góc sau khi bẻ
+                item.angle = item.angle % 180;
+                if (item.angle > 90) item.angle -= 180;
+                if (item.angle <= -90) item.angle += 180;
+            }
+        }
+    });
+
+    // BƯỚC 3: IN CHỮ VÀ GẮN SỰ KIỆN CLICK (Áp dụng góc đã làm mịn)
+    lotsData.forEach(item => {
+        const textLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        textLabel.setAttribute("x", item.cx);
+        textLabel.setAttribute("y", item.cy);
+        textLabel.setAttribute("text-anchor", "middle");
+        textLabel.setAttribute("dominant-baseline", "middle");
+        textLabel.setAttribute("class", "lot-label");
+        textLabel.setAttribute("transform", `rotate(${item.angle} ${item.cx} ${item.cy})`);
+        textLabel.textContent = item.id; 
+        item.lot.appendChild(textLabel);
+
+        // Sự kiện click hiện bảng thông tin
+        item.lot.addEventListener('click', function(e) {
+            document.getElementById('malo').innerText = "Lô: " + item.id;
+            
+            const statusEl = document.getElementById('trangThai');
+            statusEl.innerText = item.info.TrangThai; 
+            if (item.info.TrangThai === "Đang bán") {
+                statusEl.style.color = "#27ae60"; 
+            } else if (item.info.TrangThai === "Đã bán" || item.info.TrangThai === "Đã Bán") {
+                statusEl.style.color = "#e74c3c"; 
+            } else {
+                statusEl.style.color = "#f39c12"; 
+            }
+
+            document.getElementById('loai').innerText = item.info.Loai;
+            document.getElementById('dientich').innerText = item.info.DienTichLo;
+            
+            const constructInfo = document.getElementById('construction-info');
+            
+            if (item.info.Loai.toLowerCase() === "đất nền") {
+                constructInfo.style.display = "none";
+            } else {
+                constructInfo.style.display = "block";
+                document.getElementById('sotang').innerText = item.info.ChieuCao;
+                document.getElementById('dtxd').innerText = item.info.DienTichXD;
+                document.getElementById('matdo').innerText = item.info.MatDo;
+                document.getElementById('t1').innerText = item.info.Tang1;
+                document.getElementById('t2').innerText = item.info.Tang2;
+                document.getElementById('t3').innerText = item.info.Tang3;
+                document.getElementById('t4').innerText = item.info.Tang4;
+                document.getElementById('tongSan').innerText = item.info.TongSanXD;
+            }
+
+            infoBox.style.display = "block";
+            if (window.innerWidth <= 768) {
+                infoBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+            e.stopPropagation(); 
         });
-    }
+    });
+}
 // Đóng popup khi click ra ngoài
 document.addEventListener('click', function() { infoBox.style.display = "none"; });
 infoBox.addEventListener('click', function(e) { e.stopPropagation(); });
