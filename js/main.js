@@ -40,13 +40,24 @@ function initMap() {
         if (allShapes.length === 0) return;
 
         const info = dataBDS[id];
-        // Tô màu lô Đã Bán
-        if (info.TrangThai === "Đã bán" || info.TrangThai === "Đã Bán") {
-            allShapes.forEach(shape => {
-                shape.style.fill = "#7f8c8d"; 
-                shape.style.opacity = "0.8";  
-            });
-        }
+        // 1. TÔ MÀU LÔ ĐẤT TRÊN BẢN ĐỒ THEO TRẠNG THÁI
+            if (info.TrangThai === "Đã bán" || info.TrangThai === "Đã Bán") {
+                allShapes.forEach(shape => {
+                    shape.style.fill = "#7f8c8d"; // Màu xám
+                    shape.style.opacity = "0.8";  
+                });
+            } else if (info.TrangThai === "Đặt cọc") {
+                allShapes.forEach(shape => {
+                    shape.style.fill = "#f1c40f"; // Màu vàng
+                    shape.style.opacity = "0.9";  
+                });
+            } else if (info.TrangThai === "Giữ chỗ") {
+                allShapes.forEach(shape => {
+                    shape.style.fill = "#e74c3c"; // Màu đỏ
+                    shape.style.opacity = "0.9";  
+                });
+            }
+            // Trạng thái "Đang bán" không cần viết vào đây vì hệ thống sẽ tự động giữ nguyên màu gốc trong file SVG.
 
         let bestAngle = 0;
         let maxEdgeWeight = 0;
@@ -223,18 +234,24 @@ function initMap() {
         lot.element.appendChild(textLabel);
 
         // Sự kiện Click xem bảng thông tin
-        lot.element.addEventListener('click', function(e) {
-            document.getElementById('malo').innerText = "Lô: " + id;
-            
-            const statusEl = document.getElementById('trangThai');
-            statusEl.innerText = info.TrangThai; 
-            if (info.TrangThai === "Đang bán") {
-                statusEl.style.color = "#27ae60"; 
-            } else if (info.TrangThai === "Đã bán" || info.TrangThai === "Đã Bán") {
-                statusEl.style.color = "#e74c3c"; 
-            } else {
-                statusEl.style.color = "#f39c12"; 
-            }
+        lot.addEventListener('click', function(e) {
+                document.getElementById('malo').innerText = "Lô: " + id;
+                
+                // 2. TÔ MÀU CHỮ TRONG BẢNG POPUP BÊN PHẢI
+                const statusEl = document.getElementById('trangThai');
+                statusEl.innerText = info.TrangThai; 
+                
+                if (info.TrangThai === "Đang bán") {
+                    statusEl.style.color = "#27ae60"; // Chữ màu Xanh lá
+                } else if (info.TrangThai === "Đã bán" || info.TrangThai === "Đã Bán") {
+                    statusEl.style.color = "#7f8c8d"; // Chữ màu Xám
+                } else if (info.TrangThai === "Đặt cọc") {
+                    statusEl.style.color = "#f39c12"; // Chữ màu Vàng Cam (để dễ đọc trên nền trắng)
+                } else if (info.TrangThai === "Giữ chỗ") {
+                    statusEl.style.color = "#e74c3c"; // Chữ màu Đỏ
+                } else {
+                    statusEl.style.color = "#333";    // Màu mặc định nếu có trạng thái khác
+                }
 
             document.getElementById('loai').innerText = info.Loai;
             document.getElementById('dientich').innerText = info.DienTichLo;
