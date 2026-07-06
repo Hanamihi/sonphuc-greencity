@@ -315,4 +315,29 @@ function initZoom() {
         preventMouseEventsDefault: false, 
         customEventsHandler: eventsHandler 
     });
+    // --- XỬ LÝ NÚT SMART CTA ZALO ---
+document.getElementById('smart-zalo-btn').addEventListener('click', function(e) {
+    e.preventDefault(); // Chặn hành vi load lại trang mặc định của thẻ <a>
+    
+    // ĐIỀN SỐ ĐIỆN THOẠI ZALO CỦA BẠN VÀO ĐÂY (Giữ nguyên số 0 ở đầu)
+    const phoneNumber = "0858290389"; 
+    
+    // Thuật toán nhận diện thiết bị Di động
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+    if (isMobile) {
+        // [Trên Mobile]: Dùng link chuẩn để hệ điều hành gọi App Zalo
+        window.location.href = "https://zalo.me/" + phoneNumber;
+    } else {
+        // [Trên PC]: Gọi Deep Link để ép mở cửa sổ chat trên phần mềm Zalo PC
+        window.location.href = "zalo://conversation?phone=" + phoneNumber;
+        
+        // Phương án dự phòng (Fallback): 
+        // Trong trường hợp khách hàng dùng PC nhưng KHÔNG cài phần mềm Zalo PC,
+        // sau 0.5 giây sẽ tự động mở thêm 1 tab web Zalo.me dự phòng.
+        setTimeout(function() {
+            window.open("https://zalo.me/" + phoneNumber, "_blank");
+        }, 500);
+    }
+});
 }
