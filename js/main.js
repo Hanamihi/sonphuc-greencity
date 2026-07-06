@@ -23,13 +23,14 @@ Promise.all([
     console.error("Lỗi khởi tạo:", error);
     alert("Không thể tải dữ liệu hoặc bản đồ. Vui lòng kiểm tra lại đường dẫn!");
 });
-// Hàm xử lý bản đồ (Phiên bản: Smart Consensus + Sheet Manual Override)
+
+// Hàm xử lý bản đồ (Phiên bản: Smart Consensus + Sheet Manual Override + Sales Status)
 function initMap() {
     const lotElements = document.querySelectorAll('svg g[id]');
     const lotMetrics = {}; // Lưu trữ dữ liệu trung gian
 
     // ==========================================
-    // BƯỚC 1: QUÉT TẤT CẢ ĐỂ TÍNH GÓC THÔ & TỌA ĐỘ
+    // BƯỚC 1: QUÉT TẤT CẢ ĐỂ TÍNH GÓC THÔ & TỌA ĐỘ VÀ TÔ MÀU
     // ==========================================
     lotElements.forEach(lot => {
         const id = lot.id;
@@ -40,24 +41,27 @@ function initMap() {
         if (allShapes.length === 0) return;
 
         const info = dataBDS[id];
-        // 1. TÔ MÀU LÔ ĐẤT TRÊN BẢN ĐỒ THEO TRẠNG THÁI
-            if (info.TrangThai === "Đã bán" || info.TrangThai === "Đã Bán") {
+        
+        // --- XỬ LÝ TÔ MÀU THEO TRẠNG THÁI BÁN HÀNG ---
+        if (info.TrangThai) {
+            const trangThai = info.TrangThai.trim().toLowerCase();
+            let fillColor = "";
+
+            if (trangThai === "đã bán") {
+                fillColor = "#7f8c8d"; // Màu Xám
+            } else if (trangThai === "đặt cọc") {
+                fillColor = "#f1c40f"; // Màu Vàng
+            } else if (trangThai === "giữ chỗ") {
+                fillColor = "#e74c3c"; // Màu Đỏ
+            } // "đang bán" sẽ không được gán màu, giữ nguyên màu gốc của SVG
+
+            if (fillColor !== "") {
                 allShapes.forEach(shape => {
-                    shape.style.fill = "#7f8c8d"; // Màu xám
+                    shape.style.fill = fillColor; 
                     shape.style.opacity = "0.8";  
                 });
-            } else if (info.TrangThai === "Đặt cọc") {
-                allShapes.forEach(shape => {
-                    shape.style.fill = "#f1c40f"; // Màu vàng
-                    shape.style.opacity = "0.9";  
-                });
-            } else if (info.TrangThai === "Giữ chỗ") {
-                allShapes.forEach(shape => {
-                    shape.style.fill = "#e74c3c"; // Màu đỏ
-                    shape.style.opacity = "0.9";  
-                });
             }
-            // Trạng thái "Đang bán" không cần viết vào đây vì hệ thống sẽ tự động giữ nguyên màu gốc trong file SVG.
+        }
 
         let bestAngle = 0;
         let maxEdgeWeight = 0;
@@ -112,7 +116,7 @@ function initMap() {
                 weight = maxLen;
             }
 
-            // Cộng dồn Transform từ file AutoCAD xuất ra
+            // Cộng dồn Transform từ file SVG xuất ra
             let accRot = 0;
             let curr = shape;
             while (curr && curr !== lot.parentNode) {
@@ -149,7 +153,7 @@ function initMap() {
         lotMetrics[id] = {
             element: lot,
             angle: bestAngle,
-            finalAngle: bestAngle, // Mặc định ban đầu
+            finalAngle: bestAngle, 
             centerX: centerX,
             centerY: centerY,
             prefix: prefix
@@ -172,7 +176,6 @@ function initMap() {
 
         let angles = siblings.map(s => s.angle % 180);
         
-        // Gom nhóm tìm góc phổ biến nhất làm trục định chuẩn cho block thẳng
         let bins = {};
         angles.forEach(a => {
             let bin = Math.round(a / 30) * 30;
@@ -183,30 +186,23 @@ function initMap() {
         siblings.forEach(lot => {
             const info = dataBDS[lot.element.id];
             
-            // KIỂM TRA LỚP 1: Kiểm tra xem có Override thủ công từ cột GocXoay trên Sheet không
             if (info && info.GocXoay !== undefined && info.GocXoay !== "" && info.GocXoay !== "-") {
                 let manualAngle = parseFloat(info.GocXoay);
                 if (!isNaN(manualAngle)) {
-                    // Nếu trên Sheet có điền, ưu tiên số 1, áp thẳng góc mong muốn
                     lot.finalAngle = manualAngle;
-                    return; // Thoát xử lý tự động cho lô này
+                    return; 
                 }
             }
 
-            // KIỂM TRA LỚP 2 (Thuật toán tự động cho đường cong và góc chữ L):
             let diff = Math.abs((lot.angle % 180) - targetAngle);
             if (diff > 90) diff = Math.abs(diff - 180);
 
-            // CẢI TIẾN: Nếu độ lệch nằm trong khoảng dưới 25 độ, chứng tỏ đây là tuyến ĐƯỜNG CONG 
-            // HOẶC nếu lệch hẳn trên 65 độ (gần vuông góc 90 độ), chứng tỏ là CẠNH NGẮN CHỮ L (Dãy LK28)
-            // -> Giữ nguyên góc tự nhiên máy tính được, không ép về góc trung vị nữa.
             if (diff <= 25 || diff >= 65) {
                 let final = lot.angle % 180;
                 if (final > 90) final -= 180;
                 if (final <= -90) final += 180;
                 lot.finalAngle = final;
             } else {
-                // Chỉ những lô chệch hướng vô lý mới ép về xu hướng chung của block
                 let final = targetAngle % 180;
                 if (final > 90) final -= 180;
                 if (final <= -90) final += 180;
@@ -222,7 +218,6 @@ function initMap() {
         let lot = lotMetrics[id];
         const info = dataBDS[id];
 
-        // Tạo nhãn Text SVG chuẩn
         const textLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
         textLabel.setAttribute("x", lot.centerX);
         textLabel.setAttribute("y", lot.centerY);
@@ -234,42 +229,44 @@ function initMap() {
         lot.element.appendChild(textLabel);
 
         // Sự kiện Click xem bảng thông tin
-        lot.addEventListener('click', function(e) {
-                document.getElementById('malo').innerText = "Lô: " + id;
-                
-                // 2. TÔ MÀU CHỮ TRONG BẢNG POPUP BÊN PHẢI
-                const statusEl = document.getElementById('trangThai');
-                statusEl.innerText = info.TrangThai; 
-                
-                if (info.TrangThai === "Đang bán") {
-                    statusEl.style.color = "#27ae60"; // Chữ màu Xanh lá
-                } else if (info.TrangThai === "Đã bán" || info.TrangThai === "Đã Bán") {
-                    statusEl.style.color = "#7f8c8d"; // Chữ màu Xám
-                } else if (info.TrangThai === "Đặt cọc") {
-                    statusEl.style.color = "#f39c12"; // Chữ màu Vàng Cam (để dễ đọc trên nền trắng)
-                } else if (info.TrangThai === "Giữ chỗ") {
-                    statusEl.style.color = "#e74c3c"; // Chữ màu Đỏ
-                } else {
-                    statusEl.style.color = "#333";    // Màu mặc định nếu có trạng thái khác
-                }
+        lot.element.addEventListener('click', function(e) {
+            document.getElementById('malo').innerText = "Lô: " + id;
+            
+            // --- ĐỒNG BỘ MÀU CHỮ TRẠNG THÁI TRONG BẢNG POPUP ---
+            const statusEl = document.getElementById('trangThai');
+            const trangThaiText = info.TrangThai || "Đang cập nhật";
+            statusEl.innerText = trangThaiText; 
+            
+            const trangThaiLower = trangThaiText.trim().toLowerCase();
+            if (trangThaiLower === "đang bán") {
+                statusEl.style.color = "#27ae60"; // Xanh lá
+            } else if (trangThaiLower === "đặt cọc") {
+                statusEl.style.color = "#f1c40f"; // Vàng
+            } else if (trangThaiLower === "giữ chỗ") {
+                statusEl.style.color = "#e74c3c"; // Đỏ
+            } else if (trangThaiLower === "đã bán") {
+                statusEl.style.color = "#7f8c8d"; // Xám
+            } else {
+                statusEl.style.color = "#34495e"; // Màu chữ mặc định
+            }
 
-            document.getElementById('loai').innerText = info.Loai;
-            document.getElementById('dientich').innerText = info.DienTichLo;
+            document.getElementById('loai').innerText = info.Loai || "-";
+            document.getElementById('dientich').innerText = info.DienTichLo || "-";
             
             const constructInfo = document.getElementById('construction-info');
             
-            if (info.Loai.toLowerCase() === "đất nền") {
+            if (info.Loai && info.Loai.toLowerCase() === "đất nền") {
                 constructInfo.style.display = "none";
             } else {
                 constructInfo.style.display = "block";
-                document.getElementById('sotang').innerText = info.ChieuCao;
-                document.getElementById('dtxd').innerText = info.DienTichXD;
-                document.getElementById('matdo').innerText = info.MatDo;
-                document.getElementById('t1').innerText = info.Tang1;
-                document.getElementById('t2').innerText = info.Tang2;
-                document.getElementById('t3').innerText = info.Tang3;
-                document.getElementById('t4').innerText = info.Tang4;
-                document.getElementById('tongSan').innerText = info.TongSanXD;
+                document.getElementById('sotang').innerText = info.ChieuCao || "-";
+                document.getElementById('dtxd').innerText = info.DienTichXD || "-";
+                document.getElementById('matdo').innerText = info.MatDo || "-";
+                document.getElementById('t1').innerText = info.Tang1 || "-";
+                document.getElementById('t2').innerText = info.Tang2 || "-";
+                document.getElementById('t3').innerText = info.Tang3 || "-";
+                document.getElementById('t4').innerText = info.Tang4 || "-";
+                document.getElementById('tongSan').innerText = info.TongSanXD || "-";
             }
 
             infoBox.style.display = "block";
@@ -280,75 +277,42 @@ function initMap() {
         });
     }
 }
+
 // Đóng popup khi click ra ngoài
 document.addEventListener('click', function() { infoBox.style.display = "none"; });
 infoBox.addEventListener('click', function(e) { e.stopPropagation(); });
 
-// Hàm khởi tạo Zoom (Giữ nguyên logic của bạn)
+// Hàm khởi tạo Zoom
 function initZoom() {
-        var eventsHandler = {
-            haltEventListeners: ['touchstart', 'touchend', 'touchmove', 'touchleave', 'touchcancel'],
-            init: function(options) {
-                var instance = options.instance, initialScale = 1, pannedX = 0, pannedY = 0;
-                this.hammer = new Hammer(options.svgElement, { 
-                    recognizers: [ [Hammer.Pan, {direction: Hammer.DIRECTION_ALL}], [Hammer.Pinch, {enable: true}] ] 
-                });
-                this.hammer.on('panstart panmove', function(ev){
-                    if (ev.type === 'panstart') { pannedX = 0; pannedY = 0; }
-                    instance.panBy({x: ev.deltaX - pannedX, y: ev.deltaY - pannedY});
-                    pannedX = ev.deltaX; pannedY = ev.deltaY;
-                });
-                this.hammer.on('pinchstart pinchmove', function(ev){
-                    if (ev.type === 'pinchstart') { initialScale = instance.getZoom(); }
-                    instance.zoomAtPoint(initialScale * ev.scale, {x: ev.center.x, y: ev.center.y});
-                });
-            },
-            destroy: function(){ this.hammer.destroy(); }
-        };
+    var eventsHandler = {
+        haltEventListeners: ['touchstart', 'touchend', 'touchmove', 'touchleave', 'touchcancel'],
+        init: function(options) {
+            var instance = options.instance, initialScale = 1, pannedX = 0, pannedY = 0;
+            this.hammer = new Hammer(options.svgElement, { 
+                recognizers: [ [Hammer.Pan, {direction: Hammer.DIRECTION_ALL}], [Hammer.Pinch, {enable: true}] ] 
+            });
+            this.hammer.on('panstart panmove', function(ev){
+                if (ev.type === 'panstart') { pannedX = 0; pannedY = 0; }
+                instance.panBy({x: ev.deltaX - pannedX, y: ev.deltaY - pannedY});
+                pannedX = ev.deltaX; pannedY = ev.deltaY;
+            });
+            this.hammer.on('pinchstart pinchmove', function(ev){
+                if (ev.type === 'pinchstart') { initialScale = instance.getZoom(); }
+                instance.zoomAtPoint(initialScale * ev.scale, {x: ev.center.x, y: ev.center.y});
+            });
+        },
+        destroy: function(){ this.hammer.destroy(); }
+    };
 
-        svgPanZoom('#map-svg', {
-            zoomEnabled: true,
-            controlIconsEnabled: true, 
-            fit: true,                 
-            center: true,              
-            minZoom: 0.5,
-            maxZoom: 10,
-            mouseWheelZoomEnabled: true, 
-            preventMouseEventsDefault: false, 
-            customEventsHandler: eventsHandler 
-        });
-    }
-// Hàm khởi tạo Zoom (Giữ nguyên logic của bạn)
-function initZoom() {
-        var eventsHandler = {
-            haltEventListeners: ['touchstart', 'touchend', 'touchmove', 'touchleave', 'touchcancel'],
-            init: function(options) {
-                var instance = options.instance, initialScale = 1, pannedX = 0, pannedY = 0;
-                this.hammer = new Hammer(options.svgElement, { 
-                    recognizers: [ [Hammer.Pan, {direction: Hammer.DIRECTION_ALL}], [Hammer.Pinch, {enable: true}] ] 
-                });
-                this.hammer.on('panstart panmove', function(ev){
-                    if (ev.type === 'panstart') { pannedX = 0; pannedY = 0; }
-                    instance.panBy({x: ev.deltaX - pannedX, y: ev.deltaY - pannedY});
-                    pannedX = ev.deltaX; pannedY = ev.deltaY;
-                });
-                this.hammer.on('pinchstart pinchmove', function(ev){
-                    if (ev.type === 'pinchstart') { initialScale = instance.getZoom(); }
-                    instance.zoomAtPoint(initialScale * ev.scale, {x: ev.center.x, y: ev.center.y});
-                });
-            },
-            destroy: function(){ this.hammer.destroy(); }
-        };
-
-        svgPanZoom('#map-svg', {
-            zoomEnabled: true,
-            controlIconsEnabled: true, 
-            fit: true,                 
-            center: true,              
-            minZoom: 0.5,
-            maxZoom: 10,
-            mouseWheelZoomEnabled: true, 
-            preventMouseEventsDefault: false, 
-            customEventsHandler: eventsHandler 
-        });
-    }
+    svgPanZoom('#map-svg', {
+        zoomEnabled: true,
+        controlIconsEnabled: true, 
+        fit: true,                 
+        center: true,              
+        minZoom: 0.5,
+        maxZoom: 10,
+        mouseWheelZoomEnabled: true, 
+        preventMouseEventsDefault: false, 
+        customEventsHandler: eventsHandler 
+    });
+}
