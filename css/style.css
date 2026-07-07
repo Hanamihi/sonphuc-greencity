@@ -190,7 +190,12 @@ body {
         left: 10px;
         padding: 12px 15px;
         border-radius: 8px;
+        
+        /* Bổ sung 2 dòng lệnh ép tỷ lệ Scale 70% */
+        transform: scale(0.7);
+        transform-origin: bottom left; /* Neo cố định vào góc dưới cùng bên trái */
     }
+    
     .map-legend h4 { font-size: 11px; margin-bottom: 8px; padding-bottom: 5px; }
     .legend-grid { gap: 15px; }
     .legend-col { gap: 8px; }
